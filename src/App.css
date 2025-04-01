@@ -1,5 +1,13 @@
 .App {
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-items: center;
+  align-items: center;
+}
+
+.touched{
+  color: red;
+  border: 1px solid red;
 }
 
 .video{
