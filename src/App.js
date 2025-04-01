@@ -17,11 +17,11 @@ const TRAINNING_TIME = 50;
 const TOUCHED_CONFIDENCE = 0.8;
 
 function App() {
+  const [cameraError, setCameraError] = useState(null); // Chỉ lưu trạng thái lỗi
   const [isImageEnlarged, setIsImageEnlarged] = useState(false);
-
   const [touched, setTouched] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
-  const [currentStep, setCurrentStep] = useState(1); // 1: initial, 2: after first training, 3: ready to run
+  const [currentStep, setCurrentStep] = useState(1);
   const [isTraining, setIsTraining] = useState(false);
   const [instruction, setInstruction] = useState(
     "Không đưa tay vào màn hình và bấm Bắt đầu"
@@ -49,32 +49,53 @@ function App() {
     await tf.ready();
     console.log("TensorFlow.js is ready!");
 
-    await setUpCamera();
-    console.log("set up camera success ...");
+    try {
+      await setUpCamera();
+      classifier.current = knnClassifier.create();
+      mobilenetModule.current = await mobilenet.load();
 
-    classifier.current = knnClassifier.create();
-    mobilenetModule.current = await mobilenet.load();
-
-    setSetupDone(true);
-
-    console.log("set up all success ...");
-    setInstruction("Không chạm tay lên mặt, màn hình và bấm Bắt đầu");
-
-    initNotifications({ cooldown: 3000 });
+      setSetupDone(true);
+      console.log("set up all success ...");
+      setInstruction("Không chạm tay lên mặt, màn hình và bấm Bắt đầu");
+      initNotifications({ cooldown: 3000 });
+    } catch (error) {
+      console.error("Initialization error:", error);
+      setCameraError("Không thể truy cập camera. Vui lòng cho phép quyền camera và tải lại trang.");
+    }
   };
 
   const setUpCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       streamRef.current = stream;
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        return new Promise((resolve) => {
-          videoRef.current.onloadeddata = () => resolve();
+        
+        return new Promise((resolve, reject) => {
+          const onLoaded = () => {
+            if (stream.active && videoRef.current.readyState >= 2) {
+              resolve();
+            } else {
+              reject(new Error("Camera stream không hoạt động"));
+            }
+          };
+          
+          videoRef.current.onloadeddata = onLoaded;
+          
+          setTimeout(() => {
+            if (videoRef.current.readyState >= 2) {
+              onLoaded();
+            } else {
+              reject(new Error("Camera mất quá nhiều thời gian để khởi động"));
+            }
+          }, 3000);
         });
       }
     } catch (error) {
       console.error("Error accessing camera:", error);
+      setCameraError("Lỗi camera: " + error.message);
+      throw error;
     }
   };
 
@@ -85,7 +106,6 @@ function App() {
     for (let i = 0; i < TRAINNING_TIME; i++) {
       const progress = Math.round(((i + 1) / TRAINNING_TIME) * 100);
       setTrainingProgress(progress);
-      // console.log(`Progress ${progress}%`);
       await trainning(label);
     }
 
@@ -124,7 +144,6 @@ function App() {
       result.label === TOUCHED_LABEL &&
       result.confidences[result.label] > TOUCHED_CONFIDENCE
     ) {
-      // console.log("Chạm tay lên mặt");
       if (canPlaySound.current) {
         canPlaySound.current = false;
         sound.play();
@@ -132,7 +151,6 @@ function App() {
       notify("Bỏ tay ra", { body: "Bạn vừa chạm tay vào mặt!" });
       setTouched(true);
     } else {
-      // console.log("Không chạm tay lên mặt");
       setTouched(false);
     }
 
@@ -162,34 +180,26 @@ function App() {
   }, []);
 
   const getButtonText = () => {
-    if (!setupDone) {
-      return "Processing...";
-    }
-    if (isTraining) {
-      return `Training... ${trainingProgress}%`;
-    }
+    if (cameraError) return "Lỗi Camera";
+    if (!setupDone) return "Đang khởi tạo...";
+    if (isTraining) return `Training... ${trainingProgress}%`;
+    
     switch (currentStep) {
-      case 1:
-        return "Bắt đầu";
-      case 2:
-        return "Training 2";
-      case 3:
-        return "Run";
-      default:
-        return "Create by Văn Thảo - chúc bạn vui vẻ!";
+      case 1: return "Bắt đầu";
+      case 2: return "Training 2";
+      case 3: return "Run";
+      default: return "Create by Văn Thảo - chúc bạn vui vẻ!";
     }
   };
 
   const handleButtonClick = () => {
+    if (cameraError || !setupDone) return;
+    
     switch (currentStep) {
-      case 1:
-        return train(NOT_TOUCH_LABEL);
-      case 2:
-        return train(TOUCHED_LABEL);
-      case 3:
-        return run();
-      default:
-        return null;
+      case 1: return train(NOT_TOUCH_LABEL);
+      case 2: return train(TOUCHED_LABEL);
+      case 3: return run();
+      default: return null;
     }
   };
 
@@ -202,14 +212,15 @@ function App() {
           alt="logo"
           onClick={handleImageClick}
         />
-      <p>Văn Thảo - FULL STACK DEVELOPER</p>
+        <p>Văn Thảo - FULL STACK DEVELOPER</p>
       </div>
+      
       {isImageEnlarged && (
         <div className="overlay" onClick={handleCloseImage}>
           <img src="./Van-Thao.png" className="enlarged-img" alt="logo" />
         </div>
-        
       )}
+      
       <div className={`App ${touched ? "touched" : "not-touched"}`}>
         <h1>Chào bạn đến với tiện ích nhắc nhở bạn</h1>
         <p>
@@ -218,6 +229,17 @@ function App() {
           <br /> Hãy bật hệ thống này để nhắc nhở Bạn
           <br /> Giúp bạn tránh đưa vi khuẩn lên mặt
         </p>
+        
+        {/* Chỉ hiển thị thông báo lỗi nếu có */}
+        {cameraError && (
+          <div className="camera-error">
+            {cameraError}
+            <button onClick={() => window.location.reload()} className="reload-btn">
+              Tải lại trang
+            </button>
+          </div>
+        )}
+        
         <p style={{ color: "red" }}>
           {setupDone && currentStep === 1
             ? "không được đưa tay lên, nếu bạn làm sai phải refresh trang"
@@ -229,7 +251,7 @@ function App() {
             : ""}
         </p>
 
-        <video ref={videoRef} className="video" autoPlay />
+        <video ref={videoRef} className="video" autoPlay muted />
 
         <div className="instruction">{instruction}</div>
 
@@ -237,7 +259,7 @@ function App() {
           <button
             className={`button ${isTraining ? "training" : ""}`}
             onClick={handleButtonClick}
-            disabled={(isTraining && currentStep !== 4) || !setupDone}
+            disabled={!!cameraError || (isTraining && currentStep !== 4) || !setupDone}
             style={isTraining ? { "--progress": `${trainingProgress}%` } : {}}
           >
             {getButtonText()}
