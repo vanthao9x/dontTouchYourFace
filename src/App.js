@@ -1,14 +1,14 @@
 import "./App.css";
 import React, { useEffect, useRef, useState } from "react";
-import { initNotifications, notify } from '@mycv/f8-notification';
-import { Howl } from 'howler';
-import soundUrl from './assets/hey_sondn.mp3';
+import { initNotifications, notify } from "@mycv/f8-notification";
+import { Howl } from "howler";
+import soundUrl from "./assets/hey_sondn.mp3";
 import * as tf from "@tensorflow/tfjs";
 import * as mobilenet from "@tensorflow-models/mobilenet";
 import * as knnClassifier from "@tensorflow-models/knn-classifier";
 
 var sound = new Howl({
-  src: [soundUrl]
+  src: [soundUrl],
 });
 
 const NOT_TOUCH_LABEL = "not_touch_your_face";
@@ -17,18 +17,30 @@ const TRAINNING_TIME = 50;
 const TOUCHED_CONFIDENCE = 0.8;
 
 function App() {
+  const [isImageEnlarged, setIsImageEnlarged] = useState(false);
+
   const [touched, setTouched] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(1); // 1: initial, 2: after first training, 3: ready to run
   const [isTraining, setIsTraining] = useState(false);
-  const [instruction, setInstruction] = useState("Không đưa tay vào màn hình và bấm Bắt đầu");
+  const [instruction, setInstruction] = useState(
+    "Không đưa tay vào màn hình và bấm Bắt đầu"
+  );
   const [setupDone, setSetupDone] = useState(false);
-  
+
   const canPlaySound = useRef(true);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const classifier = useRef(null);
   const mobilenetModule = useRef(null);
+
+  const handleImageClick = () => {
+    setIsImageEnlarged(true);
+  };
+
+  const handleCloseImage = () => {
+    setIsImageEnlarged(false);
+  };
 
   const init = async () => {
     console.log("init...");
@@ -69,22 +81,24 @@ function App() {
   const train = async (label) => {
     setIsTraining(true);
     setTrainingProgress(0);
-    
+
     for (let i = 0; i < TRAINNING_TIME; i++) {
       const progress = Math.round(((i + 1) / TRAINNING_TIME) * 100);
       setTrainingProgress(progress);
-      console.log(`Progress ${progress}%`);
+      // console.log(`Progress ${progress}%`);
       await trainning(label);
     }
-    
+
     setIsTraining(false);
-    
+
     if (label === NOT_TOUCH_LABEL) {
       setCurrentStep(2);
-      setInstruction("Bây giờ để tay vào màn hình từ từ chạm tay lên mặt và bấm Training 2");
+      setInstruction(
+        "Bây giờ để tay vào màn hình từ từ chạm tay lên mặt và bấm Training 2"
+      );
     } else if (label === TOUCHED_LABEL) {
       setCurrentStep(3);
-      setInstruction("Training hoàn tất! Bấm Run để bắt đầu nhận diện, bạn có thể chuyển sang tab mới để thấy điều thú vị");
+      setInstruction("Training hoàn tất! Bấm Run để hệ thống giúp bạn");
     }
   };
 
@@ -99,24 +113,26 @@ function App() {
 
   const run = async () => {
     setCurrentStep(4);
-    setInstruction("Hệ thống đang chạy...");
-    
+    setInstruction(
+      "Hệ thống đang chạy... Bạn có thể bật sang tab làm việc khác. Hệ thống sẽ nhắc nhở bạn"
+    );
+
     const embedding = mobilenetModule.current.infer(videoRef.current, true);
     const result = await classifier.current.predictClass(embedding);
-    
+
     if (
       result.label === TOUCHED_LABEL &&
       result.confidences[result.label] > TOUCHED_CONFIDENCE
     ) {
-      console.log("Chạm tay lên mặt");
+      // console.log("Chạm tay lên mặt");
       if (canPlaySound.current) {
         canPlaySound.current = false;
         sound.play();
       }
-      notify('Bỏ tay ra', { body: 'Bạn vừa chạm tay vào mặt!' });
+      notify("Bỏ tay ra", { body: "Bạn vừa chạm tay vào mặt!" });
       setTouched(true);
     } else {
-      console.log("Không chạm tay lên mặt");
+      // console.log("Không chạm tay lên mặt");
       setTouched(false);
     }
 
@@ -133,7 +149,7 @@ function App() {
   useEffect(() => {
     init();
 
-    sound.on('end', function() {
+    sound.on("end", function () {
       canPlaySound.current = true;
     });
 
@@ -146,44 +162,87 @@ function App() {
   }, []);
 
   const getButtonText = () => {
-    if (!setupDone){
+    if (!setupDone) {
       return "Processing...";
     }
     if (isTraining) {
       return `Training... ${trainingProgress}%`;
     }
-    switch(currentStep) {
-      case 1: return "Bắt đầu";
-      case 2: return "Training 2";
-      case 3: return "Run";
-      default: return "";
+    switch (currentStep) {
+      case 1:
+        return "Bắt đầu";
+      case 2:
+        return "Training 2";
+      case 3:
+        return "Run";
+      default:
+        return "Create by Văn Thảo - chúc bạn vui vẻ!";
     }
   };
 
   const handleButtonClick = () => {
-    switch(currentStep) {
-      case 1: return train(NOT_TOUCH_LABEL);
-      case 2: return train(TOUCHED_LABEL);
-      case 3: return run();
-      default: return null;
+    switch (currentStep) {
+      case 1:
+        return train(NOT_TOUCH_LABEL);
+      case 2:
+        return train(TOUCHED_LABEL);
+      case 3:
+        return run();
+      default:
+        return null;
     }
   };
 
   return (
-    <div className={`App ${touched ? "touched" : "not-touched"}`}>
-      <video ref={videoRef} className="video" autoPlay />
-      
-      <div className="instruction">{instruction}</div>
-      
-      <div className="control">
-        <button
-          className={`button ${isTraining ? "training" : ""}`}
-          onClick={handleButtonClick}
-          disabled={ (isTraining && currentStep !== 4 ) || !setupDone }
-          style={isTraining ? {'--progress': `${trainingProgress}%`} : {}}
-        >
-          {getButtonText()}
-        </button>
+    <div className="container">
+      <div>
+        <img
+          src="./Van-Thao.png"
+          className="img-owner"
+          alt="logo"
+          onClick={handleImageClick}
+        />
+      <p>Văn Thảo - FULL STACK DEVELOPER</p>
+      </div>
+      {isImageEnlarged && (
+        <div className="overlay" onClick={handleCloseImage}>
+          <img src="./Van-Thao.png" className="enlarged-img" alt="logo" />
+        </div>
+        
+      )}
+      <div className={`App ${touched ? "touched" : "not-touched"}`}>
+        <h1>Chào bạn đến với tiện ích nhắc nhở bạn</h1>
+        <p>
+          Nếu bạn thường xuyên có thói quen xấu như chống cằm, cắn móng tay khi
+          làm việc
+          <br /> Hãy bật hệ thống này để nhắc nhở Bạn
+          <br /> Giúp bạn tránh đưa vi khuẩn lên mặt
+        </p>
+        <p style={{ color: "red" }}>
+          {setupDone && currentStep === 1
+            ? "không được đưa tay lên, nếu bạn làm sai phải refresh trang"
+            : ""}
+        </p>
+        <p style={{ color: "green" }}>
+          {currentStep === 2
+            ? "PHẢI ĐƯA TAY LÊN màn hình, nếu bạn làm sai phải refresh trang"
+            : ""}
+        </p>
+
+        <video ref={videoRef} className="video" autoPlay />
+
+        <div className="instruction">{instruction}</div>
+
+        <div className="control">
+          <button
+            className={`button ${isTraining ? "training" : ""}`}
+            onClick={handleButtonClick}
+            disabled={(isTraining && currentStep !== 4) || !setupDone}
+            style={isTraining ? { "--progress": `${trainingProgress}%` } : {}}
+          >
+            {getButtonText()}
+          </button>
+        </div>
       </div>
     </div>
   );
