@@ -15,29 +15,38 @@ const NOT_TOUCH_LABEL = "not_touch_your_face";
 const TOUCHED_LABEL = "touched_your_face";
 const TRAINNING_TIME = 50;
 const TOUCHED_CONFIDENCE = 0.8;
+
 function App() {
   const [touched, setTouched] = useState(false);
+  const [trainingProgress, setTrainingProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState(1); // 1: initial, 2: after first training, 3: ready to run
+  const [isTraining, setIsTraining] = useState(false);
+  const [instruction, setInstruction] = useState("Không đưa tay vào màn hình và bấm Bắt đầu");
+  const [setupDone, setSetupDone] = useState(false);
+  
   const canPlaySound = useRef(true);
   const videoRef = useRef(null);
-  const streamRef = useRef(null); // Để lưu stream camera và cleanup khi cần
+  const streamRef = useRef(null);
   const classifier = useRef(null);
-  const mobilenetModule = useRef(null); //
+  const mobilenetModule = useRef(null);
+
   const init = async () => {
     console.log("init...");
 
-    await tf.setBackend("webgl"); // Chọn backend
+    await tf.setBackend("webgl");
     await tf.ready();
     console.log("TensorFlow.js is ready!");
 
     await setUpCamera();
     console.log("set up camera success ...");
 
-    // Create the classifier.
     classifier.current = knnClassifier.create();
     mobilenetModule.current = await mobilenet.load();
 
+    setSetupDone(true);
+
     console.log("set up all success ...");
-    console.log("không chạm tay lên mặt và bấm train 1");
+    setInstruction("Không chạm tay lên mặt, màn hình và bấm Bắt đầu");
 
     initNotifications({ cooldown: 3000 });
   };
@@ -45,7 +54,7 @@ function App() {
   const setUpCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      streamRef.current = stream; // Lưu stream để có thể cleanup sau này
+      streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         return new Promise((resolve) => {
@@ -58,46 +67,47 @@ function App() {
   };
 
   const train = async (label) => {
-    console.log(label);
+    setIsTraining(true);
+    setTrainingProgress(0);
+    
     for (let i = 0; i < TRAINNING_TIME; i++) {
-      console.log(`Progress ${parseInt(((i + 1) / TRAINNING_TIME) * 100)}%`);
-
+      const progress = Math.round(((i + 1) / TRAINNING_TIME) * 100);
+      setTrainingProgress(progress);
+      console.log(`Progress ${progress}%`);
       await trainning(label);
     }
-    /**
-     * Train máy cho khuôn mặt không chạm tay
-     * bước 2 trainning máy cho khuôn mặt chạm tay
-     * bước 3 lấy hình ảnh hiện taij và so sánh với data đã học trước đó
-     */
+    
+    setIsTraining(false);
+    
+    if (label === NOT_TOUCH_LABEL) {
+      setCurrentStep(2);
+      setInstruction("Bây giờ để tay vào màn hình từ từ chạm tay lên mặt và bấm Training 2");
+    } else if (label === TOUCHED_LABEL) {
+      setCurrentStep(3);
+      setInstruction("Training hoàn tất! Bấm Run để bắt đầu nhận diện, bạn có thể chuyển sang tab mới để thấy điều thú vị");
+    }
   };
 
   const trainning = (label) => {
     return new Promise(async (resolve) => {
       const embedding = mobilenetModule.current.infer(videoRef.current, true);
       classifier.current.addExample(embedding, label);
-
       await sleep(1);
       resolve();
     });
   };
 
-  /** trong function run
-   * classifier.predictClass(
-    input: tf.Tensor,
-    k = 3
-    ): Promise<{label: string, classIndex: number, confidences: {[classId: number]: number}}>;
-  */
-
   const run = async () => {
+    setCurrentStep(4);
+    setInstruction("Hệ thống đang chạy...");
+    
     const embedding = mobilenetModule.current.infer(videoRef.current, true);
     const result = await classifier.current.predictClass(embedding);
-    console.log("Label: ",result.label);
-    console.log("Confidence: ",result.confidences);
-
+    
     if (
       result.label === TOUCHED_LABEL &&
-      result.confidences[result.label] > TOUCHED_CONFIDENCE) 
-      {
+      result.confidences[result.label] > TOUCHED_CONFIDENCE
+    ) {
       console.log("Chạm tay lên mặt");
       if (canPlaySound.current) {
         canPlaySound.current = false;
@@ -105,8 +115,7 @@ function App() {
       }
       notify('Bỏ tay ra', { body: 'Bạn vừa chạm tay vào mặt!' });
       setTouched(true);
-    }
-    else {
+    } else {
       console.log("Không chạm tay lên mặt");
       setTouched(false);
     }
@@ -124,11 +133,10 @@ function App() {
   useEffect(() => {
     init();
 
-    sound.on('end', function(){
+    sound.on('end', function() {
       canPlaySound.current = true;
     });
 
-    // clean up
     return () => {
       console.log("cleanup...");
       if (streamRef.current) {
@@ -137,34 +145,44 @@ function App() {
     };
   }, []);
 
+  const getButtonText = () => {
+    if (!setupDone){
+      return "Processing...";
+    }
+    if (isTraining) {
+      return `Training... ${trainingProgress}%`;
+    }
+    switch(currentStep) {
+      case 1: return "Bắt đầu";
+      case 2: return "Training 2";
+      case 3: return "Run";
+      default: return "";
+    }
+  };
+
+  const handleButtonClick = () => {
+    switch(currentStep) {
+      case 1: return train(NOT_TOUCH_LABEL);
+      case 2: return train(TOUCHED_LABEL);
+      case 3: return run();
+      default: return null;
+    }
+  };
+
   return (
     <div className={`App ${touched ? "touched" : "not-touched"}`}>
       <video ref={videoRef} className="video" autoPlay />
-
+      
+      <div className="instruction">{instruction}</div>
+      
       <div className="control">
-        <button        
-          className="button"
-          onClick={() => {
-            train(NOT_TOUCH_LABEL);
-          }}
-        >
-          Training 1
-        </button>
         <button
-          className="button"
-          onClick={() => {
-            train(TOUCHED_LABEL);
-          }}
+          className={`button ${isTraining ? "training" : ""}`}
+          onClick={handleButtonClick}
+          disabled={ (isTraining && currentStep !== 4 ) || !setupDone }
+          style={isTraining ? {'--progress': `${trainingProgress}%`} : {}}
         >
-          Training 2
-        </button>
-        <button
-          className="button"
-          onClick={() => {
-            run();
-          }}
-        >
-          Stop
+          {getButtonText()}
         </button>
       </div>
     </div>
